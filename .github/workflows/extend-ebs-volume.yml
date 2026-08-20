@@ -32,7 +32,7 @@ jobs:
   # Never calls modify_volume().
   plan:
     name: Plan
-    runs-on: k8s-noc-datarx
+    runs-on: ubuntu-latest
     outputs:
       action: ${{ steps.plan.outputs.action }}
     steps:
@@ -77,7 +77,7 @@ jobs:
     name: Approve & Apply
     needs: plan
     if: needs.plan.outputs.action == 'resize'
-    runs-on: k8s-noc-datarx
+    runs-on: ubuntu-latest
     environment: ebs-resize-approval
     steps:
       - uses: actions/checkout@v6
