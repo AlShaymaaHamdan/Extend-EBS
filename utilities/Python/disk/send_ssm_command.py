@@ -14,7 +14,7 @@ def send_ssm_command(ssm_client, instance_id, command, is_windows=False):
     command_id = response["Command"]["CommandId"]
 
     # Use your existing wait_for_status function
-    output = wait_for_ssm_command(ssm_client, instance_id, command_id)
+    output = wait_for_ssm_command(command_id, region)
 
     if output["Status"] != "Success":
         raise RuntimeError(
