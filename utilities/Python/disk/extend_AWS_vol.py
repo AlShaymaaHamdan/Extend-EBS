@@ -43,7 +43,7 @@ from find_EBS_vol import find_volume_for_drive
 from check_disk import get_disk_usage
 
 MAX_VOLUME_SIZE_GB = 16384          # AWS hard limit (gp2/gp3/io1/io2)
-USED_PERCENT_THRESHOLD = 80         # Only propose a resize at/above this
+USED_PERCENT_THRESHOLD = 70         # Only propose a resize at/above this
 DEFAULT_APPLY_TIMEOUT_SECONDS = 900 # 15 minutes to reach optimizing/completed
 POLL_INTERVAL_SECONDS = 15
 
