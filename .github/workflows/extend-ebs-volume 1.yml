@@ -1,0 +1,160 @@
+name: Extend EBS Volume
+
+on:
+  workflow_dispatch:
+    inputs:
+      host:
+        description: 'Instance ID, private/public IP, or tag value (from the alert)'
+        required: true
+        type: string
+      drive:
+        description: 'Drive letter (Windows, e.g. D) or mount path (Linux, e.g. /data)'
+        required: true
+        type: string
+      region:
+        description: 'AWS region'
+        required: true
+        type: string
+        default: 'us-east-1'
+
+permissions:
+  id-token: write
+  contents: read
+
+# Avoid two concurrent resize attempts against the same host/drive.
+concurrency:
+  group: extend-ebs-volume-${{ github.event.inputs.host }}-${{ github.event.inputs.drive }}
+  cancel-in-progress: false
+
+jobs:
+  # ── Job 1: plan ──────────────────────────────────────────────────────────
+  # Read-only: checks disk usage, sizes the proposed resize, writes plan.json.
+  # Never calls modify_volume().
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      action: ${{ steps.plan.outputs.action }}
+    steps:
+      - uses: actions/checkout@v6
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ github.event.inputs.region }}
+          
+      - name: Run plan
+        id: plan
+        run: |
+          python utilities/Python/disk/extend_AWS_vol.py plan \
+            --host "${{ github.event.inputs.host }}" \
+            --drive "${{ github.event.inputs.drive }}" \
+            --region "${{ github.event.inputs.region }}" \
+            --plan-file plan.json
+        # extend_AWS_vol.py plan writes its human-readable summary straight into
+        # $GITHUB_STEP_SUMMARY and sets the `action` output via $GITHUB_OUTPUT —
+        # exits 0 for every determined outcome (resize / no_action_needed /
+        # manual_intervention_required); only a real error (bad host, AWS
+        # failure, unparsable SSM output) exits non-zero and fails this job.
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ebs-resize-plan
+          path: plan.json
+          retention-days: 7
+
+  # ── Job 2: approve-and-apply ────────────────────────────────────────────
+  # Only runs when the plan actually proposes a resize. The `environment:`
+  # below IS the approval gate — GitHub pauses this job until someone in the
+  # environment's required-reviewers list approves it, right on the run page.
+  #
+  #   repo Settings -> Environments -> ebs-resize-approval -> Required reviewers
+
+  approve-and-apply:
+    name: Approve & Apply
+    needs: plan
+    if: needs.plan.outputs.action == 'resize'
+    runs-on: ubuntu-latest
+    environment: ebs-resize-approval
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ github.event.inputs.region }}
+          
+      - name: Download plan artifact
+        uses: actions/download-artifact@v6
+        with:
+          name: ebs-resize-plan
+
+      - name: Run apply
+        run: |
+          python utilities/Python/disk/extend_AWS_vol.py apply \
+            --plan plan.json \
+            --result-file apply_result.json
+        # Re-validates the volume's current size against the plan (aborts if
+        # it drifted since approval), calls modify_volume(), and polls until
+        # the modification reaches optimizing/completed. Does NOT run any
+        # in-OS filesystem extend (growpart/resize2fs/Resize-Partition) —
+        # that's a separate follow-up step. Non-zero exit fails this job
+        # clearly on any error.
+
+      - name: Upload apply result artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ebs-resize-apply-result
+          path: apply_result.json
+          retention-days: 30
+          # apply_result.json is written even on failure (with success:false
+          # and an error message) — this is what should get posted back as a
+          # comment on the originating Jira ticket.
+          if-no-files-found: warn
+
+  # ── Job 3: extend-filesystem ────────────────────────────────────────────
+  # Runs right after the EBS volume was resized. No second approval needed —
+  # the approval on Job 2 already covers the whole operation. Grows the
+  # partition + filesystem inside the OS via SSM (Linux and Windows).
+  extend-filesystem:
+    name: Extend OS Filesystem
+    needs: [plan, approve-and-apply]
+    if: needs.approve-and-apply.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ github.event.inputs.region }}
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v6
+        with:
+          name: ebs-resize-plan
+
+      - name: Run filesystem extend
+        run: |
+          python utilities/Python/disk/extend_OS_fs.py \
+            --plan plan.json \
+            --result-file extend_fs_result.json
+        # Detects Linux vs Windows from plan.json and runs the matching script
+        # over SSM. Verifies the filesystem actually grew; non-zero exit on error.
+
+      - name: Upload filesystem result artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ebs-resize-fs-result
+          path: extend_fs_result.json
+          retention-days: 30
+          if-no-files-found: warn
