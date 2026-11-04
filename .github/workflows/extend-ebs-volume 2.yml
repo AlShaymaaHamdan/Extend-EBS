@@ -16,6 +16,23 @@ on:
         required: true
         type: string
         default: 'us-east-1'
+      #issue_key:
+        #description: 'Jira issue key, e.g. NOC-1234'
+        #required: true
+        #type: string
+      #before_total_gb:
+        #description: 'Volume size (GB) before the extension'
+        #required: true
+        #type: string
+      #before_used_percent:
+        #description: 'Used space (%) before the extension'
+        #required: true
+        #type: string
+      #resolution_status:
+        #description: 'Jira transition name to apply when usage improved'
+        #required: true
+        #type: string
+        #default: 'Resolved'
 
 permissions:
   id-token: write
@@ -171,13 +188,13 @@ jobs:
           JIRA_API_TOKEN: ${{ secrets.JIRA_TOKEN }}
         run: |
           python utilities/Python/disk/verify_extension.py \
-            --issue-key "${{ inputs.issue_key }}" \
+            --issue-key "NOC-1234" \
             --host "${{ inputs.host }}" \
             --drive "${{ inputs.drive }}" \
             --region "${{ inputs.region }}" \
-            --before-total-gb "${{ inputs.before_total_gb }}" \
-            --before-used-percent "${{ inputs.before_used_percent }}" \
-            --resolution-status "${{ inputs.resolution_status }}" \
+            --before-total-gb "8gb" \
+            --before-used-percent "8gb" \
+            --resolution-status "Resolved" \
             --result-file verify_result.json
         # Re-checks current disk usage via get_disk_usage() and compares it
         # against the supplied before-extension baseline. If used% dropped,
