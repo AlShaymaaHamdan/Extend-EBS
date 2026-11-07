@@ -17,27 +17,27 @@ on:
         type: string
         default: 'us-east-1'
       dry_run:
-        description: 'Dry run: do the real disk check, but skip the Jira comment and ticket resolve (just print them)'
-        required: true
-        type: boolean
-        default: true
-      issue_key:
-        description: 'Jira issue key, e.g. NOC-1234 (not needed for a dry run)'
-        required: false
-        type: string
-      before_total_gb:
-        description: 'Volume size (GB) before the extension'
-        required: true
-        type: string
-      before_used_percent:
-        description: 'Used space (%) before the extension'
-        required: true
-        type: string
-      resolution_status:
-        description: 'Jira transition name to apply when usage improved'
-        required: true
-        type: string
-        default: 'Resolved'
+        description: 'Dry run: do the real disk check, but skip the Jira comment and ticket resolve (just print them)'
+        required: true
+        type: boolean
+        default: true
+      issue_key:
+        description: 'Jira issue key, e.g. NOC-1234 (not needed for a dry run)'
+        required: false
+        type: string
+      before_total_gb:
+        description: 'Volume size (GB) before the extension'
+        required: true
+        type: string
+      before_used_percent:
+        description: 'Used space (%) before the extension'
+        required: true
+        type: string
+      resolution_status:
+        description: 'Jira transition name to apply when usage improved'
+        required: true
+        type: string
+        default: 'Resolved'
 
 permissions:
   id-token: write
@@ -59,14 +59,14 @@ jobs:
       action: ${{ steps.plan.outputs.action }}
     steps:
       - uses: actions/checkout@v6
-      
+     
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ github.event.inputs.region }}
-          
+         
       - name: Run plan
         id: plan
         run: |
@@ -110,7 +110,7 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ github.event.inputs.region }}
-          
+         
       - name: Download plan artifact
         uses: actions/download-artifact@v6
         with:
@@ -180,42 +180,42 @@ jobs:
           path: extend_fs_result.json
           retention-days: 30
           if-no-files-found: warn
-          
+         
   # ── Job 4: verify-disk-extension ────────────────────────────────────────────
   verify-and-resolve:
-    name: Verify & Resolve
-    runs-on: k8s-noc-datarx
-    steps:
-      - uses: actions/checkout@v6
+    name: Verify & Resolve
+    runs-on: k8s-noc-datarx
+    steps:
+      - uses: actions/checkout@v6
 
-      - name: Run verification
-        env:
-          JIRA_API_TOKEN: ${{ secrets.JIRA_TOKEN }}
-        run: |
-          python utilities/Python/disk/verify_extension.py \
-            --issue-key "${{ inputs.issue_key }}" \
-            --host "${{ inputs.host }}" \
-            --drive "${{ inputs.drive }}" \
-            --region "${{ inputs.region }}" \
-            --before-total-gb "${{ inputs.before_total_gb }}" \
-            --before-used-percent "${{ inputs.before_used_percent }}" \
-            --resolution-status "${{ inputs.resolution_status }}" \
-            ${{ inputs.dry_run && '--dry-run' || '' }} \
-            --result-file verify_result.json
-        # Re-checks current disk usage via get_disk_usage() and compares it
-        # against the supplied before-extension baseline. If used% dropped,
-        # posts a before/after comment and resolves the ticket. If not,
-        # posts a manual-review comment and leaves the ticket open -- this
-        # never resolves a ticket where usage didn't actually improve.
-        # Exits non-zero only on a real failure (bad host, AWS error,
-        # unparsable SSM output, or a Jira API failure) -- both the
-        # "resolved" and "manual review required" outcomes exit 0.
+      - name: Run verification
+        env:
+          JIRA_API_TOKEN: ${{ secrets.JIRA_TOKEN }}
+        run: |
+          python utilities/Python/disk/verify_extension.py \
+            --issue-key "${{ inputs.issue_key }}" \
+            --host "${{ inputs.host }}" \
+            --drive "${{ inputs.drive }}" \
+            --region "${{ inputs.region }}" \
+            --before-total-gb "${{ inputs.before_total_gb }}" \
+            --before-used-percent "${{ inputs.before_used_percent }}" \
+            --resolution-status "${{ inputs.resolution_status }}" \
+            ${{ inputs.dry_run && '--dry-run' || '' }} \
+            --result-file verify_result.json
+        # Re-checks current disk usage via get_disk_usage() and compares it
+        # against the supplied before-extension baseline. If used% dropped,
+        # posts a before/after comment and resolves the ticket. If not,
+        # posts a manual-review comment and leaves the ticket open -- this
+        # never resolves a ticket where usage didn't actually improve.
+        # Exits non-zero only on a real failure (bad host, AWS error,
+        # unparsable SSM output, or a Jira API failure) -- both the
+        # "resolved" and "manual review required" outcomes exit 0.
 
-      - name: Upload verification result artifact
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: disk-extension-verify-result
-          path: verify_result.json
-          retention-days: 30
-          if-no-files-found: warn
+      - name: Upload verification result artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: disk-extension-verify-result
+          path: verify_result.json
+          retention-days: 30
+          if-no-files-found: warn
