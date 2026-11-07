@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 """
 verify_extension.py
@@ -50,7 +51,8 @@ from detect_os import detect_os
 from check_disk import get_disk_usage
 
 sys.path.append("Jira")
-from jira_client import JiraError, post_adf_comment, change_ticket_status
+# jira_client reads JIRA_API_TOKEN at import time, so it's imported lazily in
+# _jira() -- a --dry-run must work without any Jira credentials.
 
 
 def _utcnow_iso():
@@ -163,7 +165,10 @@ def _build_arg_parser():
     parser = argparse.ArgumentParser(
         description="Verify a disk extension took effect; comment on and resolve the Jira ticket if it did."
     )
-    parser.add_argument("--issue-key", required=True, help="Jira issue key or URL, e.g. NOC-1234.")
+    parser.add_argument("--issue-key", default="", help="Jira issue key or URL, e.g. NOC-1234. Required unless --dry-run.")
+    parser.add_argument("--dry-run", action="store_true",
+                         help="Run the real disk check but do NOT post Jira comments or change ticket status; "
+                              "print what would have been done instead.")
     parser.add_argument("--host", required=True, help="Instance ID, private/public IP, or tag value.")
     parser.add_argument("--drive", required=True, help="Drive letter (Windows) or mount path (Linux).")
     parser.add_argument("--region", required=True, help="AWS region.")
@@ -175,16 +180,43 @@ def _build_arg_parser():
     return parser
 
 
-def _post_comment(issue_key, title, body_text):
+def _jira():
+    import jira_client
+    return jira_client
+
+
+def _post_comment(issue_key, title, body_text, dry_run=False):
+    if dry_run:
+        print(f"[DRY RUN] Would post Jira comment to {issue_key or '<no issue key>'}:\n"
+              f"--- {title} ---\n{body_text}\n--- end comment ---")
+        return
+    jc = _jira()
     try:
-        post_adf_comment(issue_key, build_adf_comment(title, body_text))
-    except JiraError as exc:
+        jc.post_adf_comment(issue_key, build_adf_comment(title, body_text))
+    except jc.JiraError as exc:
         print(f"::error::Failed to post Jira comment for {issue_key}: {exc}")
+        sys.exit(1)
+
+
+def _resolve_ticket(issue_key, status, dry_run=False):
+    if dry_run:
+        print(f"[DRY RUN] Would transition {issue_key or '<no issue key>'} to '{status}'.")
+        return
+    jc = _jira()
+    try:
+        jc.change_ticket_status(issue_key, status)
+    except jc.JiraError as exc:
+        print(f"::error::Failed to resolve ticket {issue_key}: {exc}")
         sys.exit(1)
 
 
 def main():
     args = _build_arg_parser().parse_args()
+    if not args.dry_run and not args.issue_key:
+        print("Error: --issue-key is required unless --dry-run is set.", file=sys.stderr)
+        sys.exit(2)
+    if args.dry_run:
+        print("[DRY RUN] Disk check is real; Jira comment/transition will be skipped.")
 
     try:
         result = build_verification(
@@ -196,6 +228,7 @@ def main():
             args.issue_key,
             f"Disk Extension Verification — {args.host} — FAILED",
             f"Could not verify disk usage for {args.host} ({args.drive}, {args.region}): {exc}",
+            args.dry_run,
         )
         sys.exit(1)
     except ClientError as exc:
@@ -204,6 +237,7 @@ def main():
             args.issue_key,
             f"Disk Extension Verification — {args.host} — FAILED",
             f"AWS error while verifying {args.host} ({args.drive}, {args.region}): {exc}",
+            args.dry_run,
         )
         sys.exit(1)
 
@@ -216,18 +250,13 @@ def main():
         report = format_before_after_report(result)
         print(report)
         _append_step_summary(f"# Disk Extension Verification — Resolved\n\n```\n{report}\n```")
-        _post_comment(args.issue_key, title, report)
-
-        try:
-            change_ticket_status(args.issue_key, args.resolution_status)
-        except JiraError as exc:
-            print(f"::error::Failed to resolve ticket {args.issue_key}: {exc}")
-            sys.exit(1)
+        _post_comment(args.issue_key, title, report, args.dry_run)
+        _resolve_ticket(args.issue_key, args.resolution_status, args.dry_run)
     else:
         report = format_manual_review_report(result)
         print(report)
         _append_step_summary(f"# Disk Extension Verification — Manual Review Required\n\n```\n{report}\n```")
-        _post_comment(args.issue_key, f"{title} — Manual Review Required", report)
+        _post_comment(args.issue_key, f"{title} — Manual Review Required", report, args.dry_run)
 
 
 if __name__ == "__main__":
