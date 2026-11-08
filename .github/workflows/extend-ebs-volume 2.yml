@@ -184,7 +184,9 @@ jobs:
   # ── Job 4: verify-disk-extension ────────────────────────────────────────────
   verify-and-resolve:
     name: Verify & Resolve
-    runs-on: k8s-noc-datarx
+    needs: [plan, approve-and-apply,extend-filesystem]
+    if: needs.extend-filesystem.result == 'success'
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
