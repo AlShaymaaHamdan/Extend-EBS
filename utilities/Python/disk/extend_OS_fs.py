@@ -26,7 +26,7 @@ Safety checks
 Usage
 -----
   python extend_OS_fs.py --plan plan.json [--result-file extend_fs_result.json]
-                         [--timeout 600] [--skip-size-verify]
+                         [--timeout 600] [--skip-size-verify] [--dry-run]
 """
 import argparse
 import json
@@ -282,7 +282,7 @@ def parse_results(stdout):
 # Main stage
 # ---------------------------------------------------------------------------
 
-def run_extend(plan_file, timeout, verify_size=True):
+def run_extend(plan_file, timeout, verify_size=True, dry_run=False):
     with open(plan_file) as f:
         plan = json.load(f)
 
@@ -299,10 +299,29 @@ def run_extend(plan_file, timeout, verify_size=True):
     ec2 = boto3.client("ec2", region_name=region)
     ssm = boto3.client("ssm", region_name=region)
 
-    verify_volume_ready(ec2, volume_id, new_size_gb)
-
     script = build_windows_script(drive, volume_id) if platform == "windows" \
         else build_linux_script(drive, volume_id)
+
+    if dry_run:
+        print(f"[DRY RUN] Would run the {platform} filesystem-extend script on {instance_id} "
+              f"for {drive!r} (volume {volume_id}, expecting {new_size_gb} GB). Skipping SSM.")
+        print("[DRY RUN] Script that would be sent:\n" + script)
+        return {
+            "instance_id": instance_id,
+            "volume_id": volume_id,
+            "platform": platform,
+            "drive": drive,
+            "layout": "dry_run",
+            "fs_size_before_gb": None,
+            "fs_size_after_gb": None,
+            "grew": False,
+            "dry_run": True,
+            "success": True,
+            "error": None,
+            "completed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+
+    verify_volume_ready(ec2, volume_id, new_size_gb)
 
     status, stdout, stderr = run_ssm_script(ssm, instance_id, platform, script, timeout)
     print(stdout)
@@ -334,6 +353,7 @@ def run_extend(plan_file, timeout, verify_size=True):
         "fs_size_before_gb": round(before / 1024**3, 2),
         "fs_size_after_gb": round(after / 1024**3, 2),
         "grew": after > before,
+        "dry_run": False,
         "success": True,
         "error": None,
         "completed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -354,7 +374,10 @@ def format_summary(r):
         f"- **Grew this run:** {r['grew']}",
         f"- **Success:** {r['success']}",
     ]
-    if not r["grew"]:
+    if r.get("dry_run"):
+        lines[0] = "# EBS Volume Extend — OS Filesystem (DRY RUN — nothing was changed)"
+        lines.append("\n_Dry run: no commands were sent to the instance._")
+    elif not r["grew"]:
         lines.append("\n_Nothing changed this run — the filesystem was already at full size._")
     return "\n".join(lines)
 
@@ -380,13 +403,15 @@ def main():
     p.add_argument("--result-file", default="extend_fs_result.json")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS,
                    help=f"Seconds to wait for the on-instance script (default {DEFAULT_TIMEOUT_SECONDS}).")
+    p.add_argument("--dry-run", action="store_true",
+                   help="Validate the plan and print the on-instance script, but do NOT send it over SSM.")
     p.add_argument("--skip-size-verify", action="store_true",
                    help="Don't fail if the partition ends up smaller than the new volume size "
                         "(e.g. drive shares a disk with other partitions).")
     args = p.parse_args()
 
     try:
-        result = run_extend(args.plan, args.timeout, verify_size=not args.skip_size_verify)
+        result = run_extend(args.plan, args.timeout, verify_size=not args.skip_size_verify, dry_run=args.dry_run)
     except (ValueError, RuntimeError, TimeoutError) as exc:
         _fail(args.result_file, str(exc))
     except ClientError as exc:
