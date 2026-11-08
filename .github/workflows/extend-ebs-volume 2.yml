@@ -1,4 +1,4 @@
-name: Extend EBS Volume
+name: Extend Volume
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ on:
         type: string
         default: 'us-east-1'
       dry_run:
-        description: 'Dry run: do the real disk check, but skip the Jira comment and ticket resolve (just print them)'
+        description: 'Dry run: real plan + disk check, but NO volume resize, NO filesystem extend, NO Jira comment/resolve (all just printed)'
         required: true
         type: boolean
         default: true
@@ -45,7 +45,7 @@ permissions:
 
 # Avoid two concurrent resize attempts against the same host/drive.
 concurrency:
-  group: extend-ebs-volume-${{ github.event.inputs.host }}-${{ github.event.inputs.drive }}
+  group: extend-volume-${{ github.event.inputs.host }}-${{ github.event.inputs.drive }}
   cancel-in-progress: false
 
 jobs:
@@ -70,7 +70,7 @@ jobs:
       - name: Run plan
         id: plan
         run: |
-          python utilities/Python/disk/extend_AWS_vol.py plan \
+          python utilities/Python/disk/extend_volume/extend_AWS_vol.py plan \
             --host "${{ github.event.inputs.host }}" \
             --drive "${{ github.event.inputs.drive }}" \
             --region "${{ github.event.inputs.region }}" \
@@ -118,9 +118,10 @@ jobs:
 
       - name: Run apply
         run: |
-          python utilities/Python/disk/extend_AWS_vol.py apply \
+          python utilities/Python/disk/extend_volume/extend_AWS_vol.py apply \
             --plan plan.json \
-            --result-file apply_result.json
+            --result-file apply_result.json \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
         # Re-validates the volume's current size against the plan (aborts if
         # it drifted since approval), calls modify_volume(), and polls until
         # the modification reaches optimizing/completed. Does NOT run any
@@ -166,9 +167,10 @@ jobs:
 
       - name: Run filesystem extend
         run: |
-          python utilities/Python/disk/extend_OS_fs.py \
+          python utilities/Python/disk/extend_volume/extend_OS_fs.py \
             --plan plan.json \
-            --result-file extend_fs_result.json
+            --result-file extend_fs_result.json \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
         # Detects Linux vs Windows from plan.json and runs the matching script
         # over SSM. Verifies the filesystem actually grew; non-zero exit on error.
 
@@ -201,7 +203,7 @@ jobs:
         env:
           JIRA_API_TOKEN: ${{ secrets.JIRA_TOKEN }}
         run: |
-          python utilities/Python/disk/verify_extension.py \
+          python utilities/Python/disk/extend_volume/verify_extension.py \
             --issue-key "${{ inputs.issue_key }}" \
             --host "${{ inputs.host }}" \
             --drive "${{ inputs.drive }}" \
