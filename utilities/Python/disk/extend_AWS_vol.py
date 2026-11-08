@@ -25,7 +25,7 @@ Stages
 Usage
 -----
   python extend_AWS_vol.py plan  --host <id-or-ip-or-tag> --drive <drive-or-mount> --region <region> [--plan-file plan.json]
-  python extend_AWS_vol.py apply --plan plan.json [--timeout 900] [--result-file apply_result.json]
+  python extend_AWS_vol.py apply --plan plan.json [--timeout 900] [--dry-run] [--result-file apply_result.json]
 """
 import argparse
 import json
@@ -37,13 +37,14 @@ from datetime import datetime, timezone
 import boto3
 from botocore.exceptions import ClientError
 
+sys.path.append("utilities/Python/disk")
 from resolve_instance_id import resolve_instance_id
 from detect_os import detect_os
 from find_EBS_vol import find_volume_for_drive
 from check_disk import get_disk_usage
 
 MAX_VOLUME_SIZE_GB = 16384          # AWS hard limit (gp2/gp3/io1/io2)
-USED_PERCENT_THRESHOLD = 70         # Only propose a resize at/above this
+USED_PERCENT_THRESHOLD = 80         # Only propose a resize at/above this
 DEFAULT_APPLY_TIMEOUT_SECONDS = 900 # 15 minutes to reach optimizing/completed
 POLL_INTERVAL_SECONDS = 15
 
@@ -223,9 +224,12 @@ def run_plan(host, drive, region, plan_file):
 # apply stage
 # ---------------------------------------------------------------------------
 
-def run_apply(plan_file, timeout=DEFAULT_APPLY_TIMEOUT_SECONDS):
+def run_apply(plan_file, timeout=DEFAULT_APPLY_TIMEOUT_SECONDS, dry_run=False):
     """
     Load an approved plan and apply it.
+
+    With dry_run=True every validation still runs (plan action, stale-size
+    check against the live volume) but modify_volume() is NOT called.
 
     Raises:
         ValueError: plan action isn't "resize", or the volume's size drifted
@@ -261,8 +265,13 @@ def run_apply(plan_file, timeout=DEFAULT_APPLY_TIMEOUT_SECONDS):
             f"get it re-approved."
         )
 
-    ec2.modify_volume(VolumeId=volume_id, Size=new_size)
-    modification_state = _poll_modification(ec2, volume_id, timeout)
+    if dry_run:
+        print(f"[DRY RUN] Would call modify_volume(VolumeId={volume_id}, Size={new_size}) "
+              f"({actual_size} GB -> {new_size} GB). Skipping.")
+        modification_state = "dry_run"
+    else:
+        ec2.modify_volume(VolumeId=volume_id, Size=new_size)
+        modification_state = _poll_modification(ec2, volume_id, timeout)
 
     return {
         "instance_id": plan["instance_id"],
@@ -273,6 +282,7 @@ def run_apply(plan_file, timeout=DEFAULT_APPLY_TIMEOUT_SECONDS):
         "used_percent_at_resize_time": plan["disk_usage"]["used_percent"],
         "capped_at_max": plan.get("capped_at_max", False),
         "modification_state": modification_state,
+        "dry_run": dry_run,
         "success": True,
         "error": None,
         "applied_at": _utcnow_iso(),
@@ -304,8 +314,9 @@ def _poll_modification(ec2_client, volume_id, timeout):
 
 def format_apply_summary(result):
     """Human-readable Markdown summary for $GITHUB_STEP_SUMMARY / Jira comment."""
+    title = "# EBS Volume Extend — Applied (DRY RUN — nothing was changed)" if result.get("dry_run") else "# EBS Volume Extend — Applied"
     lines = [
-        "# EBS Volume Extend — Applied",
+        title,
         "",
         f"- **Instance ID:** {result['instance_id']}",
         f"- **Volume ID:** {result['volume_id']}",
@@ -368,6 +379,8 @@ def _build_arg_parser():
     apply_p.add_argument("--plan", required=True, dest="plan_file", help="Path to the plan JSON produced by 'plan'.")
     apply_p.add_argument("--timeout", type=int, default=DEFAULT_APPLY_TIMEOUT_SECONDS,
                           help=f"Seconds to wait for the modification to reach optimizing/completed (default: {DEFAULT_APPLY_TIMEOUT_SECONDS}).")
+    apply_p.add_argument("--dry-run", action="store_true",
+                          help="Validate the plan but do NOT call modify_volume().")
     apply_p.add_argument("--result-file", default="apply_result.json", help="Where to write the apply result JSON.")
 
     return parser
@@ -401,7 +414,7 @@ def main():
 
     # apply
     try:
-        result = run_apply(args.plan_file, args.timeout)
+        result = run_apply(args.plan_file, args.timeout, args.dry_run)
     except (ValueError, RuntimeError, TimeoutError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         with open(args.result_file, "w") as f:
