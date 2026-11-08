@@ -185,7 +185,7 @@ jobs:
   verify-and-resolve:
     name: Verify & Resolve
     needs: [plan, approve-and-apply,extend-filesystem]
-    if: needs.extend-filesystem.result == 'success'
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
