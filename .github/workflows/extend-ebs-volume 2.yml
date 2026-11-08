@@ -70,7 +70,7 @@ jobs:
       - name: Run plan
         id: plan
         run: |
-          python utilities/Python/disk/extend_volume/extend_AWS_vol.py plan \
+          python utilities/Python/disk/extend_AWS_vol.py plan \
             --host "${{ github.event.inputs.host }}" \
             --drive "${{ github.event.inputs.drive }}" \
             --region "${{ github.event.inputs.region }}" \
@@ -118,7 +118,7 @@ jobs:
 
       - name: Run apply
         run: |
-          python utilities/Python/disk/extend_volume/extend_AWS_vol.py apply \
+          python utilities/Python/disk/extend_AWS_vol.py apply \
             --plan plan.json \
             --result-file apply_result.json \
             ${{ inputs.dry_run && '--dry-run' || '' }}
@@ -167,7 +167,7 @@ jobs:
 
       - name: Run filesystem extend
         run: |
-          python utilities/Python/disk/extend_volume/extend_OS_fs.py \
+          python utilities/Python/disk/extend_OS_fs.py \
             --plan plan.json \
             --result-file extend_fs_result.json \
             ${{ inputs.dry_run && '--dry-run' || '' }}
@@ -203,7 +203,7 @@ jobs:
         env:
           JIRA_API_TOKEN: ${{ secrets.JIRA_TOKEN }}
         run: |
-          python utilities/Python/disk/extend_volume/verify_extension.py \
+          python utilities/Python/disk/verify_extension.py \
             --issue-key "${{ inputs.issue_key }}" \
             --host "${{ inputs.host }}" \
             --drive "${{ inputs.drive }}" \
